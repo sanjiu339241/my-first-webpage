@@ -1,0 +1,94 @@
+import os
+import re
+import requests
+from bs4 import BeautifulSoup
+
+# 基础配置
+BASE_URL = "http://zdhxy.jiangnan.edu.cn/"
+LIST_URL = "http://zdhxy.jiangnan.edu.cn/xwdt/xwgg.htm"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+# 创建保存图片的文件夹
+if not os.path.exists("images"):
+    os.mkdir("images")
+
+def get_news_list():
+    """获取新闻列表页面的所有新闻链接"""
+    resp = requests.get(LIST_URL, headers=HEADERS, timeout=10)
+    resp.encoding = "utf-8"
+    soup = BeautifulSoup(resp.text, "lxml")
+    links = []
+    # 只爬前3条新闻，避免太多
+    for a in soup.select(".list li a")[:3]:
+        href = a.get("href")
+        if href.startswith("../"):
+            href = BASE_URL + href.replace("../", "")
+        links.append(href)
+    return links
+
+def download_img(img_url, title):
+    """下载单张图片"""
+    try:
+        img_resp = requests.get(img_url, headers=HEADERS, timeout=10)
+        # 清理文件名里的非法字符
+        name = re.sub(r'[\\/*?:"<>|]', "", title)[:20]
+        ext = img_url.split(".")[-1]
+        if ext not in ["jpg", "png", "jpeg", "gif"]:
+            ext = "jpg"
+        filename = f"images/{name}.{ext}"
+        with open(filename, "wb") as f:
+            f.write(img_resp.content)
+        return filename
+    except Exception as e:
+        print(f"图片下载失败: {e}")
+        return None
+
+def parse_news(url):
+    """解析单条新闻的标题、正文和图片"""
+    resp = requests.get(url, headers=HEADERS, timeout=10)
+    resp.encoding = "utf-8"
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    # 提取标题
+    title = soup.find("h1").get_text(strip=True) if soup.find("h1") else "无标题"
+
+    # 提取正文
+    content = ""
+    for p in soup.select(".content p"):
+        text = p.get_text(strip=True)
+        if text:
+            content += text + "\n\n"
+
+    # 提取图片
+    img_urls = []
+    for img in soup.select(".content img"):
+        src = img.get("src")
+        if src:
+            if not src.startswith("http"):
+                src = BASE_URL + src
+            img_urls.append(src)
+
+    return title, content.strip(), img_urls
+
+if __name__ == "__main__":
+    news_urls = get_news_list()
+    with open("news.txt", "w", encoding="utf-8") as f:
+        for idx, url in enumerate(news_urls, 1):
+            print(f"正在爬取第{idx}条新闻: {url}")
+            try:
+                title, content, img_urls = parse_news(url)
+                # 写入标题和正文
+                f.write(f"【标题】{title}\n")
+                f.write(f"【正文】\n{content}\n")
+                f.write("="*60 + "\n\n")
+                # 下载图片
+                for i, img in enumerate(img_urls):
+                    download_img(img, f"{title}_{i}")
+            except Exception as e:
+                print(f"爬取出错: {e}")
+    print("="*60)
+    print("爬取完成！")
+    print("新闻标题+正文已保存到: news.txt")
+    print("新闻图片已保存到: images/ 文件夹")
